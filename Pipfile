@@ -1,0 +1,19 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+flake8 = "*"
+
+[packages]
+grpcio-tools = "*"
+pynacl = "*"
+requests = "*"
+web3 = "*"
+pysha3 = "*"
+py-solc-x = "*"
+docopt = "*"
+
+[requires]
+python_version = "3.7"

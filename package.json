@@ -1,0 +1,18 @@
+{
+  "name": "libra",
+  "version": "1.0.0",
+  "description": "## Problem statement",
+  "main": "index.js",
+  "dependencies": {
+    "bignumber": "^1.1.0",
+    "bignumber.js": "^9.0.0",
+    "keccak256": "^1.0.0",
+    "truffle": "^5.0.36"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
