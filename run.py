@@ -151,6 +151,8 @@ def main():
             proof.transaction_info.signed_transaction_hash.hex(),
             proof.transaction_info.state_root_hash.hex(),
             proof.transaction_info.event_root_hash.hex(),
+            proof.transaction_info.gas_used,
+            proof.transaction_info.major_status,
             root.hex(),
             [p.hex() for p in proof.ledger_info_to_transaction_info_proof.non_default_siblings],
             tx_version,

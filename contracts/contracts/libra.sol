@@ -57,6 +57,8 @@ contract Libra {
         bytes32 signedTx,
         bytes32 stateRoot,
         bytes32 eventRoot,
+        uint64 gasUsed,
+        uint64 majorStatus,
         bytes32 root,
         bytes32[] memory proof,
         uint256 txVersion,
@@ -74,7 +76,8 @@ contract Libra {
             stateRoot,
             bytes32Length,
             eventRoot,
-            uint64(0)));
+            gasUsed,
+            majorStatus));
         return checkMembership(txInfo, txVersion, bitmap, root, proof);
     }
 }
