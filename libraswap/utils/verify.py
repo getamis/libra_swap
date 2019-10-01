@@ -1,4 +1,5 @@
 from libraswap.utils.hash import create_hasher, create_hasher_prefix
+from libraswap.transaction.transaction_info import TransactionInfo
 
 ACCUMULATOR_PLACEHOLDER = b'ACCUMULATOR_PLACEHOLDER_HASH\000\000\000\000'
 
@@ -13,16 +14,18 @@ def verify_tx_proof(tx_info, tx_version, proof, root):
     state_root_len = len(tx_info.state_root_hash)
     event_root_len = len(tx_info.event_root_hash)
 
-    # tx_info = Hash(signed_tx, state_root, event_root, gas_used)
+    info = TransactionInfo(
+        tx_info.signed_transaction_hash,
+        tx_info.state_root_hash,
+        tx_info.event_root_hash,
+        tx_info.gas_used,
+        tx_info.major_status
+    )
+
+    # tx_info = Hash(signed_tx, state_root, event_root, gas_used, major_status)
     m = create_hasher()
     m.update(create_hasher_prefix(b'TransactionInfo'))
-    m.update(signed_tx_len.to_bytes(4, 'little'))
-    m.update(tx_info.signed_transaction_hash)
-    m.update(state_root_len.to_bytes(4, 'little'))
-    m.update(tx_info.state_root_hash)
-    m.update(event_root_len.to_bytes(4, 'little'))
-    m.update(tx_info.event_root_hash)
-    m.update(b'\x00' * 8)
+    m.update(info.serialize())
     result = m.digest()
 
     bitmap = proof.bitmap
@@ -47,18 +50,9 @@ def verify_tx_proof(tx_info, tx_version, proof, root):
 
 
 def verify_tx_hash(tx, tx_hash):
-    raw_tx_len = len(tx.raw_txn_bytes)
-    pubkey_len = len(tx.sender_public_key)
-    sig_len = len(tx.sender_signature)
-
-    # tx_hash = Hash(raw_tx, pubkey, sig)
+    # tx_hash = Hash(signed_txn)
     m = create_hasher()
     m.update(create_hasher_prefix(b'SignedTransaction'))
-    m.update(raw_tx_len.to_bytes(4, 'little'))
-    m.update(tx.raw_txn_bytes)
-    m.update(pubkey_len.to_bytes(4, 'little'))
-    m.update(tx.sender_public_key)
-    m.update(sig_len.to_bytes(4, 'little'))
-    m.update(tx.sender_signature)
+    m.update(tx.signed_txn)
 
     assert m.digest() == tx_hash

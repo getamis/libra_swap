@@ -1,46 +1,87 @@
-from libraswap.lib.transaction_pb2 import RawTransaction, TransactionArgument
+from canoser import *
 
+from libraswap.lib.transaction_pb2 import TransactionArgument
 
 # You could compile these codes (https://github.com/libra/libra/blob/master/language/stdlib/transaction_scripts/)
 # locally and convert the bytes code to hex string to get these values.
-TRANSFER_OPCODE = '4c49425241564d0a010007014a00000004000000034e000000060000000c54000000060000000d5a0000000600000005600000002900000004890000002000000007a90000000f00000000000001000200010300020002040200030003020402063c53454c463e0c4c696272614163636f756e74046d61696e0f7061795f66726f6d5f73656e6465720000000000000000000000000000000000000000000000000000000000000000000100020104000c000c0113010002'
-MINT_OPCODE = '4c49425241564d0a010007014a000000060000000350000000060000000c56000000060000000d5c0000000600000005620000003300000004950000002000000007b50000000f000000000000010002000300010400020002040200030003020402063c53454c463e0c4c696272614163636f756e74094c69627261436f696e046d61696e0f6d696e745f746f5f616464726573730000000000000000000000000000000000000000000000000000000000000000000100020104000c000c0113010002'
+TRANSFER_OPCODE = '4c49425241564d0a010007014a00000004000000034e000000060000000d54000000060000000e5a0000000600000005600000002900000004890000002000000008a90000000f00000000000001000200010300020002040200030204020300063c53454c463e0c4c696272614163636f756e74046d61696e0f7061795f66726f6d5f73656e6465720000000000000000000000000000000000000000000000000000000000000000000100020004000c000c0113010102'
+
+ADDRESS_LENGTH = 32
+ED25519_PUBLIC_KEY_LENGTH = 32
+ED25519_SIGNATURE_LENGTH = 64
 
 
-class Transaction:
-    def __init__(
-        self,
-        sender,
-        sequence,
-        max_gas_amount,
-        gas_unit_price,
-        expiration_time,
-        recipient,
-        amount,
-        opcode
-    ):
-        self.sender = bytes.fromhex(sender)
-        self.recipient = bytes.fromhex(recipient)
-        self.amount = amount
-        self.sequence = sequence
-        self.max_gas_amount = max_gas_amount
-        self.gas_unit_price = gas_unit_price
-        self.expiration_time = expiration_time
-        self.opcode = opcode
+class TransactionArgument(RustEnum):
+    _enums = [
+        ('U64', Uint64),
+        ('Address', [Uint8, ADDRESS_LENGTH]),
+        ('String', str),
+        ('ByteArray', [Uint8])
+    ]
 
-    @property
-    def raw_tx_bytes(self):
-        raw_tx = RawTransaction()
-        raw_tx.sender_account = self.sender
-        raw_tx.sequence_number = self.sequence
-        raw_tx.program.code = bytes.fromhex(self.opcode)
-        arg1 = raw_tx.program.arguments.add()
-        arg1.type = TransactionArgument.ADDRESS
-        arg1.data = self.recipient
-        arg2 = raw_tx.program.arguments.add()
-        arg2.type = TransactionArgument.U64
-        arg2.data = self.amount.to_bytes(8, 'little')
-        raw_tx.max_gas_amount = self.max_gas_amount
-        raw_tx.gas_unit_price = self.gas_unit_price
-        raw_tx.expiration_time = self.expiration_time
-        return raw_tx.SerializeToString()
+class WriteOp(RustEnum):
+    _enums = [
+        ('Deletion', None),
+        ('Value', [Uint8])
+    ]
+
+class AccessPath(Struct):
+    _fields = [
+        ('address', [Uint8, ADDRESS_LENGTH]),
+        ('path', [Uint8])
+    ]
+
+
+class Program(Struct):
+    _fields = [
+        ('code', [Uint8]),
+        ('args', [TransactionArgument]),
+        ('modules', [[Uint8]])
+    ]
+
+
+class WriteSet(Struct):
+    _fields = [
+        ('write_set', [(AccessPath, WriteOp)])
+    ]
+
+
+class Module(Struct):
+    _fields = [
+        ('code', [Uint8])
+    ]
+
+
+class Script(Struct):
+    _fields = [
+        ('code', [Uint8]),
+        ('args', [TransactionArgument])
+    ]
+
+
+class TransactionPayload(RustEnum):
+    _enums = [
+        ('Program', Program),
+        ('WriteSet', WriteSet),
+        ('Script', Script),
+        ('Module', Module)
+    ]
+
+
+class RawTransaction(Struct):
+    _fields = [
+        ('sender', [Uint8, ADDRESS_LENGTH]),
+        ('sequence_number', Uint64),
+        ('payload', TransactionPayload),
+        ('max_gas_amount', Uint64),
+        ('gas_unit_price', Uint64),
+        ('expiration_time', Uint64)
+    ]
+
+
+class SignedTransaction(Struct):
+    _fields = [
+        ('raw_txn', RawTransaction),
+        ('public_key', [Uint8, ED25519_PUBLIC_KEY_LENGTH]),
+        ('signature', [Uint8, ED25519_SIGNATURE_LENGTH])
+    ]
