@@ -10,10 +10,6 @@ def verify_events(events):
 
 
 def verify_tx_proof(tx_info, tx_version, proof, root):
-    signed_tx_len = len(tx_info.signed_transaction_hash)
-    state_root_len = len(tx_info.state_root_hash)
-    event_root_len = len(tx_info.event_root_hash)
-
     info = TransactionInfo(
         tx_info.signed_transaction_hash,
         tx_info.state_root_hash,
