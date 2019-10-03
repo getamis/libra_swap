@@ -1,76 +1,58 @@
-from io import BytesIO
+from canoser import Struct
+from canoser.types import *
 
 
-class AccountState:
-    def __init__(
-        self,
-        authentication_key,
-        balance,
-        delegated_withdrawal_capability,
-        received_events_count,
-        sent_events_count,
-        sequence_number
-    ):
-        self.authentication_key = authentication_key
-        self.balance = balance
-        self.delegated_withdrawal_capability = delegated_withdrawal_capability
-        self.received_events_count = received_events_count
-        self.sent_events_count = sent_events_count
-        self.sequence_number = sequence_number
+# FIXME: I don't know how exactly to generate the account state path yet.
+#        This value is fixed so we make a constance here.
+#        However, since we are using keccak256, the value should be changed if
+#        we use sha3-256.
+ACCOUNT_STATE_PATH = '01296d2b26a8976ed85bbb78f1e8a7b424499a1a91a5189c9d2c36cda6d74a252d'
+
+class EventHandle(Struct):
+    _fields = [
+        ('count', Uint64),
+        ('key', [Uint8])
+    ]
+
+    @staticmethod
+    def empty():
+        return EventHandle(0, [])
+
+
+class AccountResource(Struct):
+    _fields = [
+        ('authentication_key', [Uint8]),
+        ('balance', Uint64),
+        ('delegated_key_rotation_capability', bool),
+        ('delegated_withdrawal_capability', bool),
+        ('received_events', EventHandle),
+        ('sent_events', EventHandle),
+        ('sequence_number', Uint64)
+    ]
+
+    @property
+    def address(self):
+        return bytes(self.authentication_key).hex()
 
     @staticmethod
     def empty(address):
-        return AccountState(address, 0, 0, 0, 0, 0)
-
-    @staticmethod
-    def from_bytes(data):
-        buffer = BytesIO(data)
-
-        # account blob = {blob_key: blob_value}
-        blob_len = int.from_bytes(buffer.read(4), byteorder="little")
-
-        # blob_key
-        blob_key_len = int.from_bytes(buffer.read(4), byteorder="little")
-        blob_key = buffer.read(blob_key_len).hex()
-
-        # blob value
-        blob_value_len = int.from_bytes(buffer.read(4), byteorder="little")
-
-        # 1. authentication key (address)
-        authentication_key_len = int.from_bytes(buffer.read(4), byteorder="little")
-        authentication_key = buffer.read(authentication_key_len).hex()
-
-        # 2. balance
-        balance = int.from_bytes(buffer.read(8), byteorder="little")
-        # 3. withdrawal capability
-        delegated_withdrawal_capability = int.from_bytes(buffer.read(1), byteorder="little")
-
-        # 4. received event count / key
-        received_events_count = int.from_bytes(buffer.read(8), byteorder="little")
-        received_event_key_len = int.from_bytes(buffer.read(4), byteorder="little")
-        received_event_key = buffer.read(received_event_key_len).hex()
-
-        # 5. sent event count / key
-        sent_events_count = int.from_bytes(buffer.read(8), byteorder="little")
-        sent_event_key_len = int.from_bytes(buffer.read(4), byteorder="little")
-        sent_event_key = buffer.read(sent_event_key_len).hex()
-
-        # 6. sequence number
-        sequence_number = int.from_bytes(buffer.read(8), byteorder="little")
-
-        return AccountState(
-            authentication_key,
-            balance,
-            delegated_withdrawal_capability,
-            received_events_count,
-            sent_events_count,
-            sequence_number
-        )
+        if isinstance(address, str):
+            address = bytes.fromhex(address)
+        if isinstance(address, bytes):
+            address = list(address)
+        return AccountResource(address, 0, False, False, EventHandle.empty(), EventHandle.empty(), 0)
 
     def __str__(self):
-        return f'''authentication_key: {self.authentication_key}
+        return f'''address: {self.address}
 balance: {self.balance}
+delegated_key_rotation_capability: {self.delegated_key_rotation_capability}
 delegated_withdrawal_capability: {self.delegated_withdrawal_capability}
-received_events_count: {self.received_events_count}
-sent_events_count: {self.sent_events_count}
+received_events_count: {self.received_events.count}
+sent_events_count: {self.sent_events.count}
 sequence_number: {self.sequence_number}'''
+
+
+class AccountState(Struct):
+    _fields = [
+        ('blob', {})
+    ]

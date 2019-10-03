@@ -8,12 +8,15 @@ from libraswap.lib.admission_control_pb2_grpc import AdmissionControlStub
 from libraswap.lib.get_with_proof_pb2 import (
     GetAccountStateRequest, GetAccountTransactionBySequenceNumberRequest,
     RequestItem, UpdateToLatestLedgerRequest)
-from libraswap.lib.transaction_pb2 import SignedTransaction
-from libraswap.transaction.transaction import TRANSFER_OPCODE, Transaction
+from libraswap.transaction.transaction import (TRANSFER_OPCODE, RawTransaction,
+                                               Script, SignedTransaction,
+                                               TransactionArgument,
+                                               TransactionPayload)
 from libraswap.utils.hash import create_hasher, create_hasher_prefix
 from libraswap.utils.verify import (verify_events, verify_tx_hash,
                                     verify_tx_proof)
-from libraswap.wallet.account_state import AccountState
+from libraswap.wallet.account_state import (ACCOUNT_STATE_PATH,
+                                            AccountResource, AccountState)
 
 
 class LibraClient:
@@ -45,9 +48,12 @@ class LibraClient:
         state = response.response_items[0].get_account_state_response
         raw_data = state.account_state_with_proof.blob.blob
         if len(raw_data) == 0:
-            return AccountState.empty(addr)
+            return AccountResource.empty(addr)
         else:
-            return AccountState.from_bytes(raw_data)
+            # account_state_map = {'path': <resource>, 'address': <address_length>}
+            account_state_map = AccountState.deserialize(raw_data).blob
+            account_resource = account_state_map[bytes.fromhex(ACCOUNT_STATE_PATH)]
+            return AccountResource.deserialize(bytes(account_resource))
 
     def get_account_transaction(self, address, seq, fetch_events=None):
         tx_req = GetAccountTransactionBySequenceNumberRequest(account=bytes.fromhex(address), sequence_number=seq, fetch_events=True)
@@ -77,20 +83,38 @@ class LibraClient:
         account_state = self.get_account_state(sender.address)
         seq = account_state.sequence_number
 
-        tx = Transaction(sender.address, seq, max_gas_amount, gas_unit_price,
-                         expiration_time, recipient.address, amount, TRANSFER_OPCODE)
+        # create raw transaction
+        script = Script(
+            list(bytes.fromhex(TRANSFER_OPCODE)),
+            [
+                TransactionArgument('Address', list(bytes.fromhex(recipient.address))),
+                TransactionArgument('U64', amount)
+            ]
+        )
+        tx = RawTransaction(
+            list(bytes.fromhex(sender.address)),
+            seq,
+            TransactionPayload('Script', script),
+            max_gas_amount,
+            gas_unit_price,
+            expiration_time
+        )
 
         m = create_hasher()
         m.update(create_hasher_prefix(b'RawTransaction'))
-        m.update(tx.raw_tx_bytes)
+        m.update(tx.serialize())
         raw_tx_hash = m.digest()
 
-        signed_txn = SignedTransaction()
-        signed_txn.sender_public_key = bytes.fromhex(sender.public_key)
-        signed_txn.raw_txn_bytes = tx.raw_tx_bytes
-        signed_txn.sender_signature = sender.sign(raw_tx_hash)[:64]
+        # sign raw transaction
+        signed_txn = SignedTransaction(
+            tx,
+            list(bytes.fromhex(sender.public_key)),
+            list(sender.sign(raw_tx_hash)[:64])
+        )
 
-        request = SubmitTransactionRequest(signed_txn=signed_txn)
+        # send raw transaction
+        request = SubmitTransactionRequest()
+        request.signed_txn.signed_txn = signed_txn.serialize()
         response = self.stub.SubmitTransaction(request)
         if response.ac_status.code != AdmissionControlStatusCode.Accepted:
             raise Exception('Transaction has been rejected by admission control')

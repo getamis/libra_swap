@@ -22,6 +22,7 @@ from web3.auto import w3
 
 from contract import deploy_contract, get_contract
 from libraswap.client import LibraClient
+from libraswap.transaction.transaction_info import TransactionInfo
 from libraswap.utils.hash import create_hasher
 from libraswap.wallet.wallet import LibraWallet
 
@@ -142,15 +143,20 @@ def main():
 
         # get transaction infomation
         root, tx_version, proof = libra.get_account_transaction(from_account.address, from_sequence)
+        tx_info = TransactionInfo(
+            proof.transaction_info.signed_transaction_hash,
+            proof.transaction_info.state_root_hash,
+            proof.transaction_info.event_root_hash,
+            proof.transaction_info.gas_used,
+            proof.transaction_info.major_status
+        )
 
         libra_contract = get_contract('Libra', contract_address)
 
         from_address = eth_account1 if arguments['--from'] == 'A' else eth_account2
         # send to contract
-        tx_hash = libra_contract.functions.doesTxExist(
-            proof.transaction_info.signed_transaction_hash.hex(),
-            proof.transaction_info.state_root_hash.hex(),
-            proof.transaction_info.event_root_hash.hex(),
+        tx_hash = libra_contract.functions.checkMembership(
+            tx_info.serialize().hex(),
             root.hex(),
             [p.hex() for p in proof.ledger_info_to_transaction_info_proof.non_default_siblings],
             tx_version,
@@ -158,6 +164,12 @@ def main():
         ).transact({
             'from': from_address,
         })
+        tx_receipt = w3.eth.waitForTransactionReceipt(tx_hash)
+        validation_logs = libra_contract.events.ValidationResult().processReceipt(tx_receipt)
+        log = dict(dict(validation_logs[0])['args'])
+
+        assert log['isValid'] == True
+
         print(f"Libra transaction has passed the contract validation, tx hash: {tx_hash.hex()}")
         print(f"Now, account {arguments['--from']} can send secret to account {arguments['--to']} privately\n")
     elif arguments['redeem']:

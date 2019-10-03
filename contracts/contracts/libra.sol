@@ -8,6 +8,10 @@ contract Libra {
     bytes constant transactionInfoHasher = "TransactionInfo";
     bytes constant transactionAccumulatorHasher = "TransactionAccumulator";
 
+    event ValidationResult(
+        bool isValid
+    );
+
     function createHashPrefix(bytes memory salt)
         internal
         pure
@@ -17,7 +21,7 @@ contract Libra {
         return keccak256(abi.encodePacked(salt, libraPrefix));
     }
 
-    function checkMembership(
+    function validateMerkleProof(
         bytes32 leaf,
         uint256 txVersion,
         uint256 bitmap,
@@ -53,28 +57,23 @@ contract Libra {
         return computedHash == rootHash;
     }
 
-    function doesTxExist(
-        bytes32 signedTx,
-        bytes32 stateRoot,
-        bytes32 eventRoot,
+    function checkMembership(
+        bytes memory txInfo,
         bytes32 root,
         bytes32[] memory proof,
         uint256 txVersion,
         uint256 bitmap
     )
         public
-        pure
-        returns (bool)
     {
-        bytes32 txInfo = keccak256(abi.encodePacked(
+        bytes32 txInfoHash = keccak256(abi.encodePacked(
             createHashPrefix(transactionInfoHasher),
-            bytes32Length,
-            signedTx,
-            bytes32Length,
-            stateRoot,
-            bytes32Length,
-            eventRoot,
-            uint64(0)));
-        return checkMembership(txInfo, txVersion, bitmap, root, proof);
+            txInfo
+        ));
+        bool isValid = validateMerkleProof(txInfoHash, txVersion, bitmap, root, proof);
+
+        emit ValidationResult(
+            isValid
+        );
     }
 }

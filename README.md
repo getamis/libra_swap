@@ -84,12 +84,11 @@ This action helps **participant** redeem locked ETH. With the secret, participan
 ### Customized Libra core
 Since Libra use sha3-256 as its default hash function, and Ethereum doesn't support it inherently, we chose to customize Libra core to use keccak-256. After cloning Libra project, you need to modify some lines of code before execution.
 
-On the other hand, since the development of Libra iterates very quickly, you need to fix the version to prevent possible unexpected failure. Here, we specify the version of testnet on 9/4, 2019.
-> Reference: https://community.libra.org/t/testnet-update-september-4th/1630
+On the other hand, since the development of Libra iterates very quickly, you need to fix the version to prevent possible unexpected failure. Here, we specify the version of testnet.
 ```shell
 $ git clone https://github.com/libra/libra
 $ cd libra
-$ git checkout 05364e6
+$ git checkout 3dc03ffd
 $ vim crypto/crypto/src/hash.rs
 ```
 Search all `new_sha3_256()` and replace them with `new_keccak256()`. It should be 4 of it.
@@ -113,7 +112,7 @@ Find `config.json` file and change the value of `RPC_SERVER`.
 
 4. Mint LIB to participant's address manually
 ```
-> account mint 1fc7a4b236e6f6a1f4b63dd1d15a8415c5aed258bc7c6b4d3dbe8f15104b0e92 100
+> account mint b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 100
 ```
 
 ### Execution
