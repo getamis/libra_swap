@@ -32,7 +32,7 @@ def deploy_contract(contract_name):
     tx_receipt = w3.eth.waitForTransactionReceipt(tx_hash)
     contract_address = tx_receipt.contractAddress
 
-    print(f'Deploy {contract_name}.sol to "{contract_address}"')
+    print(f'Deploy {contract_name}.sol to "{contract_address}"\n')
 
     return contract(address=contract_address)
 
