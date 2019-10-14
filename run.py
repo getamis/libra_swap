@@ -2,16 +2,13 @@
 
 Usage:
   run.py deploy_contract
-  run.py generate_secret [options]
-  run.py initiate [--from=<from>] [--to=<to>] [--hashed_secret=<hashed_secret>]
-  run.py transfer_lib [--from=<from>] [--to=<to>] [--amount=<amount>]
-  run.py verify_lib_tx [--from=<from>] [--to=<to>] [--from_sequence=<from_sequence>]
-  run.py redeem [--account=<account>] [--secret=<secret>]
+  run.py deposit [--depositor=<depositor>] [--beneficiary=<beneficiary>]
+  run.py query_deposit [--deposit_id=<deposit_id>]
+  run.py transfer_1_lib [--from=<from>] [--to=<to>]
+  run.py transfer_1_eth [--depositor=<depositor>] [--deposit_id=<deposit_id>]
+  run.py challenge [--from=<from>] [--from_sequence=<from_sequence>] [--deposit_id=<deposit_id>]
   run.py (-h | --help | --usage)
   run.py --version
-
-Options:
-  --demo    Use default secret
 """
 import json
 import os
@@ -66,83 +63,88 @@ def main():
     eth_account1 = w3.eth.accounts[0]
     eth_account2 = w3.eth.accounts[1]
 
+    show_balance(libra, lib_account1, lib_account2, eth_account1, eth_account2)
+
     if arguments['deploy_contract']:
-        swap_contract = deploy_contract('AtomicSwap')
         libra_contract = deploy_contract('Libra')
 
         # write contract addresses to config file for convenience
         config = load_config()
-        config['SWAP_CONTRACT_ADDRESS'] = swap_contract.address
         config['LIBRA_CONTRACT_ADDRESS'] = libra_contract.address
         update_config(config)
-    elif arguments['generate_secret']:
-        # generate secret
-        if arguments['--demo'] is True:
-            secret = b'\x9c\xd4\xb5]z\xae\x829'
-        else:
-            secret = os.urandom(8)
+    elif arguments['deposit']:
+        depositor_address = eth_account1 if arguments['--depositor'] == 'A' else eth_account2
+        beneficiary_address = eth_account1 if arguments['--beneficiary'] == 'A' else eth_account2
+        contract_address = load_config()['LIBRA_CONTRACT_ADDRESS']
 
-        m = create_hasher()
-        m.update(secret)
-        hashed_secret = m.digest()
+        libra_contract = get_contract('Libra', contract_address)
 
-        print(f'Secret: {secret.hex()}')
-        print(f'Hashed secret: {hashed_secret.hex()}')
-    elif arguments['initiate']:
-        show_balance(libra, lib_account1, lib_account2, eth_account1, eth_account2)
-
-        from_address = eth_account1 if arguments['--from'] == 'A' else eth_account2
-        to_address = eth_account1 if arguments['--to'] == 'A' else eth_account2
-        hashed_secret = arguments['--hashed_secret']
-        contract_address = load_config()['SWAP_CONTRACT_ADDRESS']
-
-        swap_contract = get_contract('AtomicSwap', contract_address)
-
-        # initiate(address receiver, bytes32 hashedSecret)
-        tx_hash = swap_contract.functions.initiate(
-            to_address,
-            hashed_secret,
+        # deposit(address beneficiary)
+        tx_hash = libra_contract.functions.deposit(
+            beneficiary_address,
         ).transact({
-            'from': from_address,
-            'value': w3.toWei(1, 'ether'),
+            'from': depositor_address,
+            'value': w3.toWei(2, 'ether'),
         })
 
         tx_receipt = w3.eth.waitForTransactionReceipt(tx_hash)
-        initiated_swap_logs = swap_contract.events.Initiated().processReceipt(tx_receipt)
-        log = dict(dict(initiated_swap_logs[0])['args'])
+        deposit_logs = libra_contract.events.DepositEvent().processReceipt(tx_receipt)
+        log = dict(dict(deposit_logs[0])['args'])
 
-        assert log['initiator'] == from_address
-        assert log['receiver'] == to_address
+        assert log['depositor'] == depositor_address
+        assert log['beneficiary'] == beneficiary_address
 
-        print(f"account {arguments['--from']} initiates a transaction with hashedSecret {log['hashedSecret'].hex()} to account {arguments['--to']}\n")
+        print(f"account {arguments['--depositor']} deposits 2 ethers to contract with deposit ID {log['depositID']}, and specifies beneficiary to account {arguments['--beneficiary']}\n")
+    elif arguments['query_deposit']:
+        deposit_id = int(arguments['--deposit_id'])
+        contract_address = load_config()['LIBRA_CONTRACT_ADDRESS']
 
-        show_balance(libra, lib_account1, lib_account2, eth_account1, eth_account2)
-    elif arguments['transfer_lib']:
-        show_balance(libra, lib_account1, lib_account2, eth_account1, eth_account2)
+        libra_contract = get_contract('Libra', contract_address)
 
+        deposit = libra_contract.functions.deposits(
+            deposit_id
+        ).call()
+        print(f"depositor: {deposit[0]}\nbeneficiary: {deposit[1]}\namount: {w3.fromWei(deposit[2], 'ether')}\nstart time: {deposit[3]}\nrefund time: {deposit[4]}\n")
+    elif arguments['transfer_1_lib']:
         from_account = lib_account1 if arguments['--from'] == 'A' else lib_account2
         to_account = lib_account1 if arguments['--to'] == 'A' else lib_account2
-        amount = int(arguments['--amount'])
 
         lib_state = libra.get_account_state(from_account.address)
         if lib_state.balance == 0:
             raise Exception('Please mint some LIB to address A manually')
 
-        libra.send_transaction(from_account, to_account, amount * LIB)
+        libra.send_transaction(from_account, to_account, 1 * LIB)
 
         print(f"Transaction has been sent from account {arguments['--from']} with sequence {lib_state.sequence_number}\n")
 
         time.sleep(3)
-
-        show_balance(libra, lib_account1, lib_account2, eth_account1, eth_account2)
-    elif arguments['verify_lib_tx']:
-        from_account = lib_account1 if arguments['--from'] == 'A' else lib_account2
-        to_account = lib_account1 if arguments['--to'] == 'A' else lib_account2
-        from_sequence = int(arguments['--from_sequence'])
+    elif arguments['transfer_1_eth']:
+        depositor_eth_address = eth_account1 if arguments['--depositor'] == 'A' else eth_account2
+        deposit_id = int(arguments['--deposit_id'])
         contract_address = load_config()['LIBRA_CONTRACT_ADDRESS']
 
+        libra_contract = get_contract('Libra', contract_address)
+
+        print(f"Libra payment is confirmed. {arguments['--depositor']} will send 1 ether to beneficiary and get the remaining deposit.\n")
+
+        # transfer(uint256 depositID, uint amount)
+        tx_hash = libra_contract.functions.transfer(
+            deposit_id,
+            w3.toWei(1, 'ether')
+        ).transact({
+            'from': depositor_eth_address,
+        })
+    elif arguments['challenge']:
+        from_lib_account = lib_account1 if arguments['--from'] == 'A' else lib_account2
+        from_sequence = int(arguments['--from_sequence'])
+        from_eth_address = eth_account1 if arguments['--from'] == 'A' else eth_account2
+        deposit_id = int(arguments['--deposit_id'])
+        contract_address = load_config()['LIBRA_CONTRACT_ADDRESS']
+
+        libra_contract = get_contract('Libra', contract_address)
+
         # get transaction infomation
-        root, tx_version, proof = libra.get_account_transaction(from_account.address, from_sequence)
+        root, tx_version, proof = libra.get_account_transaction(from_lib_account.address, from_sequence)
         tx_info = TransactionInfo(
             proof.transaction_info.signed_transaction_hash,
             proof.transaction_info.state_root_hash,
@@ -151,47 +153,21 @@ def main():
             proof.transaction_info.major_status
         )
 
-        libra_contract = get_contract('Libra', contract_address)
-
-        from_address = eth_account1 if arguments['--from'] == 'A' else eth_account2
-        # send to contract
-        tx_hash = libra_contract.functions.checkMembership(
+        # challenge(uint256 depositID, bytes memory txInfo, bytes32 root, bytes32[] memory proof, uint256 txVersion, uint256 bitmap)
+        tx_hash = libra_contract.functions.challenge(
+            deposit_id,
             tx_info.serialize().hex(),
             root.hex(),
             [p.hex() for p in proof.ledger_info_to_transaction_info_proof.non_default_siblings],
             tx_version,
             proof.ledger_info_to_transaction_info_proof.bitmap
         ).transact({
-            'from': from_address,
-        })
-        tx_receipt = w3.eth.waitForTransactionReceipt(tx_hash)
-        validation_logs = libra_contract.events.ValidationResult().processReceipt(tx_receipt)
-        log = dict(dict(validation_logs[0])['args'])
-
-        assert log['isValid'] == True
-
-        print(f"Libra transaction has passed the contract validation, tx hash: {tx_hash.hex()}")
-        print(f"Now, account {arguments['--from']} can send secret to account {arguments['--to']} privately\n")
-    elif arguments['redeem']:
-        show_balance(libra, lib_account1, lib_account2, eth_account1, eth_account2)
-
-        account = eth_account1 if arguments['--account'] == 'A' else eth_account2
-        secret = arguments['--secret']
-        contract_address = load_config()['SWAP_CONTRACT_ADDRESS']
-
-        swap_contract = get_contract('AtomicSwap', contract_address)
-
-        # redeem(bytes memory secret)
-        tx_hash = swap_contract.functions.redeem(
-            secret
-        ).transact({
-            'from': account,
+            'from': from_eth_address,
         })
 
         tx_receipt = w3.eth.waitForTransactionReceipt(tx_hash)
-        print(f"Account {arguments['--account']} redeems successfully\n")
-
-        show_balance(libra, lib_account1, lib_account2, eth_account1, eth_account2)
+        print(f"Account {arguments['--from']} challenges successfully.\n")
+    show_balance(libra, lib_account1, lib_account2, eth_account1, eth_account2)
 
 
 if __name__ == '__main__':
