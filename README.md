@@ -1,76 +1,78 @@
-# LibraSwap MVP
+# LibraBridge MVP
 
 ## Problem statement
 
-LibraSwap LIB ↔ ETH
+If we want to realize atomic swap between Libra and Ethereum, we need both blockchains to support Hash Timelock Contracts (HTLC). Though Libra claims it supports smart contract, it’s still under development and the user currently cannot deploy contract on chain. Hence, in our LibraSwap article, we assume that coin swap happens correctly if there is a trusted third party but this design is far away from decentralization. Nevertheless, we still can build a **trustless custodian** by protocol design and SPV proof.
 
-Precondition:
+For example, I have a Libra token but want to exchange LIB for ETH. An exchange, called MAX, provides a LIB-ETH pair exchange so I can trade on the platform. So the easiest way is to deposit LIB on MAX and get ETH back under the assumption if I trust the service provider, MAX.
 
-1. A has 1 LIB
-2. B has 1 ETH
-3. A wants to exchange 1 LIB for B's 1 ETH
-
-Result:
-
-1. A will get 1 ETH
-2. B will get 1 LIB
-
-### Limitation on Libra
-
-- Move language is limited and premature
+So the question becomes if we want to do token exchange, can we achieve it without trusting MAX?
 
 ### Our approach
 
-Due to the reason that Libra is still at an early stage and Move is under development, we can not deploy and interact with the libra contract. We implement a unilateral Libra swap instead of the standard atomic swap. In our implementation, we have two roles, an initiator and a participant. Participant is the one who has LIB tokens and he wants to trade his LIB tokens for initiator's ETH. Initiator, by contrast, is like an ETH merchant.
+In our implementation, we have two roles, a custodian and a participant. Participant is the one who has LIB tokens and he wants to trade his LIB tokens for custodian's ETH. Custodian, by contrast, is like an ETH merchant.
 
-At the beginning of the swap process, initiator will generate a secret and locks ETH to the swap contract protected by the secret. Participant could redeem the funds as long as the secret is known. If a period of time (e.g 10 minutes) expires and the funds still have not be redeemed by the participant, the fund could be refunded back to initiator.
-Then, participant will transfer LIB tokens to initiator's Libra account. After the transaction has been mined, participant could provide the transaction information to initiator for validation. If the transaction passes the validation (e.g merkle proof and transaction signature), initiator could give participant the secret privately.
-Last, with the real secret, participant could finally claim the locked ETH in the swap contract.
+First, we can use Libra SPV proof to verify a Libra transaction. By implementing Libra SPV proof in smart contract, we can communicate to contract for verifying Libra transaction directly. Next, we require two methods **deposit** and **challenge** to make custodian trustworthy. The idea is custodian needs to put the deposit in the contract, and the contract acts as an escrow to complete the trade. Once custodian misbehaves by not transferring ETH to the participant, the participant can use challenge function to prove the Libra transaction happen.
 
-In conclusion, the process is shown below:
+The process is shown below:
 
-1. Initiator generates a secret
-2. Initiator establishes a swap and locks ETH in it
-3. Participant transfers LIB to initiator
-4. Initiator validates the transaction, and if it's valid, initiator provides the secret to participant
-5. Participant redeems ETH
+#### Normal Case:
 
-![flow](assets/flow.png)
+1. Custodian deposits some funds and specifies the beneficiary.
+2. Participant queries the deposit to check if the beneficiary is right and has enough funds.
+3. Participant transfers 1 LIB to custodian.
+4. Custodian validates the transaction, and if it's valid, custodian transfers 1 ETH to participant.
+
+![flow](assets/case_1_flow.png)
+
+#### Misbehaved Case:
+
+1. Custodian deposits some funds and specifies the beneficiary.
+2. Participant queries the deposit to check if the beneficiary is right and has enough funds.
+3. Participant transfers 1 LIB to custodian.
+4. Custodian doesn't fulfill the commitment.
+5. Participant launches a challenge by providing the transaction proof.
+6. If the challenge is successful, slash the custodian's deposit to compensate for participant.
+
+![flow](assets/case_2_flow.png)
+
 ## Command
 ```
 Commands:
   deploy_contract
-  generate_secret
-  initiate --from=<from> --to=<to> --hashed_secret=<hashed_secret>
-  transfer_lib --from=<from> --to=<to> --amount=<amount>
-  verify_lib_tx --from=<from> --to=<to> --from_sequence=<from_sequence>
-  redeem --account=<account> --secret=<secret>
+  run.py deposit [--depositor=<depositor>] [--beneficiary=<beneficiary>]
+  run.py query_deposit [--deposit_id=<deposit_id>]
+  run.py transfer_1_lib [--from=<from>] [--to=<to>]
+  run.py transfer_1_eth [--depositor=<depositor>] [--deposit_id=<deposit_id>]
+  run.py challenge [--from=<from>] [--from_sequence=<from_sequence>] [--deposit_id=<deposit_id>]
 ```
 **deploy_contract**
 
-This is a one-time setup. It will deploy two contracts to ganache. One is Libra contract which will validate the merkle proof of provided Libra transaction. Another one is swap contract which will be responsible for locking and redeeming ETH. After deployment, the two contract addresses will be saved to `config.json` file.
+This is a one-time setup. It will deploy Libra contract to ganache. After deployment, the contract address will be saved to `config.json` file. This contract contains three functions: **deposit**, **transfer**, and **challenge**.
 
-**generate_secret**
+- deposit: Every deposit action is considered non fungible with a unique deposit ID. It must specify a beneficiary and the amount. Also it will use the current time as the start time and specify the refund time as current time plus 1 hour.
+- transfer: Every transfer should be provided a deposit ID and the caller must be the depositor of that deposit. This action will transfer the specified amount of ETH to the beneficiary and refund the remaining locked funds back to the depositor.
+- challenge: Every challenge should be provided a deposit ID and the caller must be the beneficiary of that deposit. This action could be used if the depositor doesn't fulfill the commitment. If the challenge is successful, all the locked funds in this deposit will be transferred to participant.
 
-This action helps **initiator** generates a random secret.
+**deposit --depositor=\<depositor> --beneficiary=\<beneficiary>**
 
-**initiate --from=\<from> --to=\<to> --hashed_secret=\<hashed_secret>**
+This action helps **custodian** create a new deposit. Caller should specify the participant as the beneficiary and it will require 2 ETH as deposit.
 
-This action helps **initiator** launch a new swap. Initiator needs to provide the receiver and the hash of secret to protect the locked ETH. Anyone who has the secret could redeem the funds.
+**query_deposit --deposit_id=\<deposit_id>**
 
-**transfer_lib --from=\<from> --to=\<to> --amount=\<amount>**
+This action queries a particular deposit record by providing the deposit ID. It helps **participant** to examine if he or she is the beneficiary and if the locked funds are enough for slash.
 
-This action helps **participant** transfer LIB token to initiator. Before performing this action, participant needs to ensure having enough LIB balance.
+**transfer_1_lib --from=\<from> --to=\<to>**
 
-**verify_lib_tx --from=\<from> --to=\<to> --from_sequence=\<from_sequence>**
+This action helps **participant** transfer 1 LIB token to custodian. Before performing this action, participant needs to ensure having enough LIB balance.
 
-This action helps **initiator** verify the transaction. Under the hood, this verification will validate the merkle proof of a Libra transaction and the transaction signature. Also, it will check the transaction events to make sure the transaction execution to be successful. Futhermore, it will pass the transaction information to Libra contract for validation, although it's not necessary in this scenario.
+**transfer_1_eth --depositor=\<depositor> --deposit_id=\<deposit_id>**
 
-After the validation, **initiator** should provide the secret to **participant** privately.
+In normal case, if custodian receives LIB token from participant, custodian will transfer the equivalent amount of ETH to participant. This action helps **custodian** transfer 1 ETH token to participant (the beneficiary) and refunds the remaining locked funds. Caller should specify the deposit ID.
 
-**redeem --account=\<account> --secret=\<secret>**
+**challenge --from=\<from> --from_sequence=\<from_sequence>**
 
-This action helps **participant** redeem locked ETH. With the secret, participant should redeem the funds before the swap expired.
+If custodian misbehave by not sending back ETH, this action could be used to help **participant** to launch a challenge. Under the hood, this verification will validate the merkle proof of a Libra transaction. If the validation is successful, it will slash the deposit to compensate participant.
 
 ## Example
 ### Prerequisite
@@ -117,78 +119,109 @@ Find `config.json` file and change the value of `RPC_SERVER`.
 
 ### Execution
 
-Assume there are two parties, A (participant) and B (initiator). And A wants to trade its LIB for B's ETH. Also, for simplicity, this program will create A's ETH address, A's LIB address, B's ETH address, and B's LIB address automatically.
+Assume there are two parties, A (participant) and B (custodian). And A wants to trade its LIB for B's ETH. Also, for simplicity, this program will create A's ETH address, A's LIB address, B's ETH address, and B's LIB address automatically.
 
-Step 1: Deploy Libra and swap contract
+Step 1: Deploy Libra contract
 ```shell
 $ python run.py deploy_contract
-Deploy AtomicSwap.sol to "0xe8e7210B78379b6978e35e6f5156205b6B4018a3"
-Deploy Libra.sol to "0x8382A0e1ab9917Ed92D8b8Fc7002ba40f8607698"
-```
-Setup. Deploy Libra contract and swap contract.
-
-Step 2: B generates a secret
-```shell
-$ python run.py generate_secret --demo
-Secret: 9cd4b55d7aae8239
-Hashed secret: 069c6c04531c8439b674fa23ad283e884b9e2f4bc26b329ed2944a7c21570ccb
-```
-B generates a secret and its hash. B should keep the secret in private.
-
-Step 3: B initiates a swap.
-```shell
-$ python run.py initiate --from=B --to=A --hashed_secret=069c6c04531c8439b674fa23ad283e884b9e2f4bc26b329ed2944a7c21570ccb
-
-A's LIB address: 1fc7a4b236e6f6a1f4b63dd1d15a8415c5aed258bc7c6b4d3dbe8f15104b0e92 (100.0)
-B's LIB address: 9b17f87e511f97e1dc4e5cde4aa94d7b94c25534110c26c97ce6189735582fc0 (0.0)
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (100.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (0.0)
 A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (100)
 B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (100)
 
-account B initiates a transaction with hashedSecret 069c6c04531c8439b674fa23ad283e884b9e2f4bc26b329ed2944a7c21570ccb to account A
+Deploy Libra.sol to "0xe8e7210B78379b6978e35e6f5156205b6B4018a3"
 
-A's LIB address: 1fc7a4b236e6f6a1f4b63dd1d15a8415c5aed258bc7c6b4d3dbe8f15104b0e92 (100.0)
-B's LIB address: 9b17f87e511f97e1dc4e5cde4aa94d7b94c25534110c26c97ce6189735582fc0 (0.0)
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (100.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (0.0)
 A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (100)
-B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (98.99731162)
+B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (100)
 ```
-B specifies the future recipient (A), provides the hashed of the secret, and locks 1 ETH in the swap contract. Within a short period (e.g 10 minutes), A could send 1 LIB to B to claim the locked 1 ETH.
+
+Step 2: B deposits and specifies A as beneficiary
+```shell
+$ python run.py deposit --depositor=B --beneficiary=A
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (100.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (0.0)
+A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (100)
+B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (100)
+
+account B deposits 2 ethers to contract with deposit ID 0, and specifies beneficiary to account A
+
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (100.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (0.0)
+A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (100)
+B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (97.99705588)
+```
+B initiates a new deposit with deposit ID 0. After this action, the ETH balance of B reduced about 2 ETH for the deposit.
+
+Step 3: A checks the deposit.
+```shell
+$ python run.py query_deposit --deposit_id=0
+
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (100.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (0.0)
+A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (100)
+B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (97.99705588)
+
+depositor: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09
+beneficiary: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd
+amount: 2
+start time: 1570189452
+refund time: 1570193052
+
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (100.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (0.0)
+A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (100)
+B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (97.99705588)
+```
+A examines the deposit 0. Notice that the depositor is exactly B's ETH address and the beneficiary is also A's ETH address.
 
 Step 4: A transfers 1 LIB to B
 ```shell
-$ python run.py transfer_lib --from=A --to=B --amount=1
-A's LIB address: 1fc7a4b236e6f6a1f4b63dd1d15a8415c5aed258bc7c6b4d3dbe8f15104b0e92 (100.0)
-B's LIB address: 9b17f87e511f97e1dc4e5cde4aa94d7b94c25534110c26c97ce6189735582fc0 (0.0)
+$ python run.py python run.py transfer_1_lib --from=A --to=B
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (100.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (0.0)
 A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (100)
-B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (98.99731162)
+B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (97.99705588)
 
 Transaction has been sent from account A with sequence 0
 
-A's LIB address: 1fc7a4b236e6f6a1f4b63dd1d15a8415c5aed258bc7c6b4d3dbe8f15104b0e92 (99.0)
-B's LIB address: 9b17f87e511f97e1dc4e5cde4aa94d7b94c25534110c26c97ce6189735582fc0 (1.0)
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (99.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (1.0)
 A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (100)
-B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (98.99731162)
+B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (97.99705588)
 ```
 
-Step 5: B verifies the Libra transaction
+Step 5: B transfers 1 ETH to A
 ```shell
-$ python run.py verify_lib_tx --from=A --to=B --from_sequence=0
-Libra transaction has passed the contract validation, tx hash: 0xb6fb73021ac87e98d17f4b1c822783aeffd5ddfc2089233e33605152f015b867
-Now, account A can send secret to account B privately
-```
-After this step, if it's successful, B should provide the secret to A privately.
+$ python run.py transfer_1_eth --depositor=B --deposit_id=0
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (99.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (1.0)
+A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (100)
+B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (97.99705588)
 
-Step 6: A redeems 1 ETH with secret
+Libra payment is confirmed. B will send 1 ether to beneficiary and get the remaining deposit.
+
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (99.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (1.0)
+A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (101)
+B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (98.9964013)
+```
+After this step, if it's successful, the exchange is finished.
+
+Step 6: A challenges if step 5 never executed
 ```shell
-$ python run.py redeem --account=A --secret=9cd4b55d7aae8239
-A's LIB address: 1fc7a4b236e6f6a1f4b63dd1d15a8415c5aed258bc7c6b4d3dbe8f15104b0e92 (99.0)
-B's LIB address: 9b17f87e511f97e1dc4e5cde4aa94d7b94c25534110c26c97ce6189735582fc0 (1.0)
-A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (99.9992596)
-B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (98.99731162)
+$ python run.py challenge --from=A --from_sequence=0 --deposit_id=0
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (99.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (1.0)
+A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (100)
+B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (97.99705588)
 
-Account A redeems successfully
+Account A challenges successfully.
 
-A's LIB address: 1fc7a4b236e6f6a1f4b63dd1d15a8415c5aed258bc7c6b4d3dbe8f15104b0e92 (99.0)
-B's LIB address: 9b17f87e511f97e1dc4e5cde4aa94d7b94c25534110c26c97ce6189735582fc0 (1.0)
-A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (100.99859138)
-B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (98.99731162)
+A's LIB address: b12f622546592ad91ac6d20c77053a4720f391ea349facfb95628b22e1a28627 (99.0)
+B's LIB address: cff25ea1a9a4733b083bab846a72d85c7722ba499863154157ad1fc8fd2c8e91 (1.0)
+A's ETH balance: 0x30F7A604B04e49440fBAD299698c16766a2c1Cbd (101.99925206)
+B's ETH balance: 0xe9b48dd32B9DA77e39Cdf6cDc1024b65da572C09 (97.99705588)
 ```
+After challenge, A gets more than 1 ETH and B is punished.
